@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>USPSA Accuracy Breakdown</title>
+<style>
+:root {
+  --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; --line: #dcdcd5; --card: #fff;
+  --accent: #c2410c; --accent-fg: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #161615; --fg: #ececE8; --muted: #9a9a93; --line: #34342f; --card: #1f1f1d; --accent: #ea7a3c; --accent-fg: #161615; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+main { max-width: 1400px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 16px; }
+#drop { border: 2px dashed var(--line); border-radius: 8px; padding: 32px; text-align: center; background: var(--card); }
+#drop.over { border-color: var(--accent); }
+#drop p { margin: 0 0 12px; color: var(--muted); }
+button, select, input[type=file]::file-selector-button { font: inherit; }
+button { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+select { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; max-width: 100%; }
+#err { color: #b91c1c; margin-top: 12px; }
+nav { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+.controls { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.controls label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+.wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 5px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th:first-child, td:first-child { text-align: left; position: sticky; left: 0; background: var(--card); }
+th { cursor: pointer; user-select: none; font-weight: 600; }
+th.sorted::after { content: ' \25BE'; }
+th.sorted.asc::after { content: ' \25B4'; }
+tr:last-child td { border-bottom: 0; }
+td.empty { color: var(--muted); }
+tfoot td, tr.total td { font-weight: 600; }
+.note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>USPSA Accuracy Breakdown</h1>
+  <div class="sub">Load a PractiScore results export (.txt) to break down A/B/C/D/Miss/No Shoot by division and class. Runs entirely in your browser; nothing is uploaded.</div>
+
+  <div id="drop">
+    <p>Drop the export here, or choose a file</p>
+    <input type="file" id="file" accept=".txt,.csv,text/plain">
+    <div id="err"></div>
+  </div>
+
+  <section id="app" class="hidden">
+    <h2 id="title" style="font-size:16px;margin:16px 0 0"></h2>
+    <div class="sub" id="meta"></div>
+    <div class="controls">
+      <label>Division <select id="f-div"></select></label>
+      <label>Class <select id="f-cls"></select></label>
+    </div>
+    <nav>
+      <button data-tab="table" class="on">Counts by group</button>
+      <button data-tab="matrix">Accuracy matrix</button>
+    </nav>
+
+    <div id="tab-table">
+      <div class="controls">
+        <label>Scope <select id="t-scope"></select></label>
+        <label>Show <select id="t-show">
+          <option value="total">Totals</option>
+          <option value="avg">Avg per shooter-stage</option>
+        </select></label>
+        <button id="t-csv">Export CSV</button>
+      </div>
+      <div class="wrap"><table id="t-table"></table></div>
+    </div>
+
+    <div id="tab-matrix" class="hidden">
+      <div class="controls">
+        <label>Metric <select id="m-metric"></select></label>
+        <label>Show <select id="m-show">
+          <option value="avg">Avg per shooter-stage</option>
+          <option value="total">Totals</option>
+        </select></label>
+        <button id="m-csv">Export CSV</button>
+      </div>
+      <div class="wrap"><table id="m-table"></table></div>
+    </div>
+    <div class="note">Penalties = procedurals, double popper misses, late/extra shots, extra hits and additional penalties (Misses and No Shoots are separate columns). "Avg per shooter-stage" divides by the number of shooter-stage scores in the row. DQ/DNF shooters and empty scores are excluded; chrono stages are ignored.</div>
+  </section>
+</main>
+<script src="app.js"></script>
+<script src="app.js"></script>
+<script>
+let M = null, lastCsv = {};
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function load(text) {
+  $('err').textContent = '';
+  try { M = parseExport(text); } catch (e) { $('err').textContent = e.message; return; }
+  if (!M.entries.length) { $('err').textContent = 'No scores found in that file.'; return; }
+  $('title').textContent = M.name;
+  const shooters = new Set(M.entries.map(e => e.comp.id)).size;
+  $('meta').textContent = [M.date, shooters + ' shooters', M.stages.length + ' stages', M.entries.length + ' stage scores' + (M.skipped ? ' (' + M.skipped + ' DQ/DNF/empty excluded)' : '')].filter(Boolean).join(' · ');
+  $('t-scope').innerHTML = '<option value="all">Match total</option>' + M.stages.map((s, i) => `<option value="${i}">${esc(s.name)}</option>`).join('');
+  const opts = (all, each, vals) => `<option value="all">${all}</option><option value="each">${each}</option>` + vals.map(v => `<option value="v:${esc(v)}">${esc(v)}</option>`).join('');
+  $('f-div').innerHTML = opts('All divisions (combined)', 'Each division', [...new Set(M.comps.map(c => c.division))].sort(divisionRank));
+  $('f-cls').innerHTML = opts('All classes (combined)', 'Each class', [...new Set(M.entries.map(e => e.comp.cls))].sort((a, b) => classRank(a) - classRank(b)));
+  $('f-div').value = 'each';
+  $('m-metric').innerHTML = ZONES.map(z => `<option value="${z}">${esc(ZONE_LABEL[z])}</option>`).join('');
+  $('app').classList.remove('hidden');
+  render();
+}
+
+// "all" merges, "each" splits, "v:X" filters to X. Rows come back in division then class order.
+function groups(list) {
+  const d = $('f-div').value, c = $('f-cls').value;
+  const keep = list.filter(e => (!d.startsWith('v:') || e.comp.division === d.slice(2)) && (!c.startsWith('v:') || e.comp.cls === c.slice(2)));
+  const key = comp => [d === 'each' ? comp.division : '', c === 'each' ? comp.cls : ''];
+  const m = new Map();
+  for (const e of keep) {
+    const k = key(e.comp).join('\u0000');
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(e);
+  }
+  const named = x => x.startsWith('v:') ? x.slice(2) : '';
+  return [...m].map(([k, l]) => {
+    const [kd, kc] = k.split('\u0000');
+    const label = [kd || named(d), kc || named(c)].filter(Boolean).join(' / ') || 'All';
+    return { label, kd, kc, list: l };
+  }).sort((a, b) => divisionRank(a.kd, b.kd) || classRank(a.kc) - classRank(b.kc));
+}
+
+const scopeEntries = v => v === 'all' ? M.entries : M.entries.filter(e => e.stage === M.stages[+v]);
+const cellVal = (t, z, show) => show === 'total' ? t[z] : (t.n ? t[z] / t.n : null);
+const fmt = (v, show) => v === null ? '–' : show === 'total' ? v.toLocaleString() : v.toFixed(2);
+const rawCsv = v => v === null ? '' : +v.toFixed(4);
+
+let sort = { col: null, asc: false };
+function renderTable() {
+  const show = $('t-show').value, list = scopeEntries($('t-scope').value);
+  const gs = groups(list).map(g => ({ ...g, t: aggregate(g.list) }));
+  const all = aggregate(gs.flatMap(g => g.list));
+  const cols = [{ id: 'label', label: 'Group' }, { id: 'n', label: 'Shooters' }, ...ZONES.map(z => ({ id: z, label: ZONE_LABEL[z] }))];
+  const val = (g, id) => id === 'label' ? g.label : id === 'n' ? g.t.shooterCount : cellVal(g.t, id, show);
+  if (sort.col) gs.sort((a, b) => {
+    const x = val(a, sort.col), y = val(b, sort.col);
+    const r = typeof x === 'string' ? x.localeCompare(y) : (x ?? -1) - (y ?? -1);
+    return sort.asc ? r : -r;
+  });
+  const row = (label, t) => `<td>${esc(label)}</td><td>${t.shooterCount}</td>` + ZONES.map(z => `<td>${fmt(cellVal(t, z, show), show)}</td>`).join('');
+  $('t-table').innerHTML = '<thead><tr>' + cols.map(c => `<th data-col="${c.id}" class="${sort.col === c.id ? 'sorted' + (sort.asc ? ' asc' : '') : ''}">${esc(c.label)}</th>`).join('') + '</tr></thead><tbody>'
+    + gs.map(g => '<tr>' + row(g.label, g.t) + '</tr>').join('')
+    + (gs.length > 1 ? '</tbody><tfoot><tr class="total">' + row('All shown', all) + '</tr></tfoot>' : '</tbody>');
+  lastCsv.table = [cols.map(c => c.label), ...gs.map(g => [g.label, g.t.shooterCount, ...ZONES.map(z => rawCsv(cellVal(g.t, z, show)))])];
+}
+
+function renderMatrix() {
+  const z = $('m-metric').value, show = $('m-show').value;
+  const gs = groups(M.entries);
+  const f = l => l.length ? cellVal(aggregate(l), z, show) : null;
+  const rows = gs.map(g => [g.label, ...M.stages.map(s => f(g.list.filter(e => e.stage === s))), f(g.list)]);
+  const head = ['Group', ...M.stages.map(s => s.name), 'Match total'];
+  // shade stage columns on one scale; the total column is excluded since totals dwarf stage values
+  const body = rows.flatMap(r => r.slice(1, -1)).filter(v => v !== null);
+  const lo = Math.min(...body), hi = Math.max(...body);
+  const shade = v => v === null || hi === lo ? '' : ` style="background:color-mix(in srgb, var(--accent) ${Math.round(8 + 62 * (v - lo) / (hi - lo))}%, transparent)"`;
+  $('m-table').innerHTML = '<thead><tr>' + head.map(h => `<th style="cursor:default">${esc(h)}</th>`).join('') + '</tr></thead><tbody>'
+    + rows.map(r => `<tr><td>${esc(r[0])}</td>` + r.slice(1).map((v, i) =>
+      `<td${i === r.length - 2 ? '' : shade(v)}${v === null ? ' class="empty"' : ''}>${fmt(v, show)}</td>`).join('') + '</tr>').join('')
+    + '</tbody>';
+  lastCsv.matrix = [head, ...rows.map(r => [r[0], ...r.slice(1).map(rawCsv)])];
+}
+
+function render() { renderTable(); renderMatrix(); }
+
+function csv(rows, name) {
+  const q = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.map(r => r.map(q).join(',')).join('\n')], { type: 'text/csv' }));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+
+$('file').onchange = e => e.target.files[0] && e.target.files[0].text().then(load);
+const drop = $('drop');
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && e.dataTransfer.files[0].text().then(load); };
+for (const id of ['f-div', 'f-cls']) $(id).onchange = render;
+for (const id of ['t-scope', 't-show']) $(id).onchange = renderTable;
+for (const id of ['m-metric', 'm-show']) $(id).onchange = renderMatrix;
+$('t-table').onclick = e => {
+  const th = e.target.closest('th'); if (!th) return;
+  sort = { col: th.dataset.col, asc: sort.col === th.dataset.col ? !sort.asc : th.dataset.col === 'label' };
+  renderTable();
+};
+$('t-csv').onclick = () => csv(lastCsv.table, 'accuracy-by-group.csv');
+$('m-csv').onclick = () => csv(lastCsv.matrix, 'accuracy-matrix.csv');
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  $('tab-table').classList.toggle('hidden', b.dataset.tab !== 'table');
+  $('tab-matrix').classList.toggle('hidden', b.dataset.tab !== 'matrix');
+});
+</script>
+</body>
+</html>
