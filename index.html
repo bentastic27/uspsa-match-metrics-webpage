@@ -52,6 +52,7 @@ tfoot td, tr.total td { font-weight: 600; }
 h2.sec { font-size: 16px; margin: 20px 0 8px; }
 :root { --z-A: #3d8f5f; --z-C: #d9b53f; --z-D: #e08a2e; --z-M: #c8372d; --z-NS: #7a5aa6; --z-PEN: #4b5563; }
 @media (prefers-color-scheme: dark) { :root { --z-A: #5bb581; --z-C: #e6c653; --z-D: #ee9d4a; --z-M: #e5574d; --z-NS: #a283d1; --z-PEN: #9aa3b0; } }
+.tip { position: fixed; pointer-events: none; z-index: 10; background: var(--fg); color: var(--bg); padding: 6px 8px; border-radius: 6px; font-size: 12px; white-space: pre; display: none; }
 </style>
 </head>
 <body>
@@ -91,18 +92,15 @@ h2.sec { font-size: 16px; margin: 20px 0 8px; }
 
     <div id="tab-matrix" class="hidden">
       <div class="controls">
-        <label>Show <select id="m-show">
-          <option value="avg">Avg per shooter-stage</option>
-          <option value="total">Totals</option>
-        </select></label>
         <label><input type="checkbox" id="m-a" checked> Include A hits</label>
         <button id="m-csv">Export CSV</button>
       </div>
       <div class="legend" id="m-legend"></div>
       <div id="m-charts"></div>
     </div>
-    <div class="note">Penalties = procedurals, double popper misses, late/extra shots, extra hits and additional penalties (Misses and No Shoots are separate columns). "Avg per shooter-stage" divides by the number of shooter-stage scores in the row. The stage charts show one stacked bar per stage: all classes combined, then each class, on a shared scale; the Class dropdown only applies to the counts tab, and "Each division" gives a set of charts per division. DQ/DNF shooters and empty scores are excluded; chrono stages are ignored.</div>
+    <div class="note">Penalties = procedurals, double popper misses, late/extra shots, extra hits and additional penalties (Misses and No Shoots are separate columns). "Avg per shooter-stage" divides by the number of shooter-stage scores in the row. The stage charts show one bar per stage, each scaled to 100% of its A/C/D/Miss/No Shoot/Penalty total (hover a color for the exact count): all classes combined, then each class; the Class dropdown only applies to the counts tab, and "Each division" gives a set of charts per division. DQ/DNF shooters and empty scores are excluded; chrono stages are ignored.</div>
   </section>
+<div class="tip" id="tip"></div>
 </main>
 <script src="app.js"></script>
 <script src="app.js"></script>
@@ -170,39 +168,36 @@ function renderTable() {
   lastCsv.table = [cols.map(c => c.label), ...gs.map(g => [g.label, g.t.shooterCount, ...ZONES.map(z => rawCsv(cellVal(g.t, z, show)))])];
 }
 
-const niceMax = v => { const p = Math.pow(10, Math.floor(Math.log10(v || 1))); for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p; return 10 * p; };
-
-function stageBars(list, zs, show) {
+function stageBars(list, zs) {
   return M.stages.map(s => {
-    const l = list.filter(e => e.stage === s), t = aggregate(l);
-    return { stage: s, t, vals: zs.map(z => cellVal(t, z, show) || 0) };
+    const t = aggregate(list.filter(e => e.stage === s));
+    return { stage: s, t, vals: zs.map(z => t[z]), total: zs.reduce((a, z) => a + t[z], 0) };
   });
 }
 
-function chartSvg(bars, zs, ymax, label) {
+// Bars are normalised to 100%; the exact counts live in the hover tooltip.
+function chartSvg(bars, zs, label) {
   const W = 720, H = 190, L = 44, R = 8, T = 8, B = 26, pw = W - L - R, ph = H - T - B;
-  const y = v => T + ph - ph * v / ymax;
+  const y = v => T + ph - ph * v / 100;
   let g = '';
-  for (let i = 0; i <= 4; i++) {
-    const v = ymax * i / 4;
-    g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${+v.toFixed(2)}</text>`;
-  }
+  for (let i = 0; i <= 4; i++) g += `<line x1="${L}" x2="${W - R}" y1="${y(i * 25)}" y2="${y(i * 25)}"/><text x="${L - 6}" y="${y(i * 25) + 4}" text-anchor="end">${i * 25}%</text>`;
   const band = pw / bars.length;
   bars.forEach((b, i) => {
     const x = L + band * i + band * 0.15;
     let acc = 0;
     zs.forEach((z, k) => {
-      const v = b.vals[k]; if (!v) return;
-      g += `<rect x="${x}" y="${y(acc + v)}" width="${band * 0.7}" height="${ph * v / ymax}" fill="var(--z-${z})"><title>${esc(b.stage.name)} · ${esc(label)}\n${ZONE_LABEL[z]}: ${+v.toFixed(2)} (${b.t.n} shooter-stages)</title></rect>`;
-      acc += v;
+      const n = b.vals[k]; if (!n) return;
+      const pct = 100 * n / b.total;
+      g += `<rect x="${x}" y="${y(acc + pct)}" width="${band * 0.7}" height="${ph * pct / 100}" fill="var(--z-${z})" data-tip="${esc(b.stage.name + ' · ' + label + '\n' + ZONE_LABEL[z] + ': ' + n.toLocaleString() + ' (' + pct.toFixed(1) + '%)\n' + b.t.n + ' shooter-stages')}"/>`;
+      acc += pct;
     });
-    g += `<text x="${x + band * 0.35}" y="${H - 8}" text-anchor="middle"><title>${esc(b.stage.name)}</title>S${b.stage.num}</text>`;
+    g += `<text x="${x + band * 0.35}" y="${H - 8}" text-anchor="middle" data-tip="${esc(b.stage.name)}">S${b.stage.num}</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">${g}</svg>`;
 }
 
 function renderMatrix() {
-  const show = $('m-show').value, zs = ZONES.filter(z => z !== 'A' || $('m-a').checked);
+  const zs = ZONES.filter(z => z !== 'A' || $('m-a').checked);
   $('m-legend').innerHTML = zs.map(z => `<span><i style="background:var(--z-${z})"></i>${ZONE_LABEL[z]}</span>`).join('');
   const d = $('f-div').value;
   const divs = d === 'each' ? [...new Set(M.entries.map(e => e.comp.division))].sort(divisionRank) : [d.startsWith('v:') ? d.slice(2) : null];
@@ -211,16 +206,15 @@ function renderMatrix() {
     const list = dv === null ? M.entries : M.entries.filter(e => e.comp.division === dv);
     const classes = [...new Set(list.map(e => e.comp.cls))].sort((a, b) => classRank(a) - classRank(b));
     const sets = [['All classes', list], ...classes.map(c => [c, list.filter(e => e.comp.cls === c)])];
-    charts.push({ dv, sets: sets.map(([name, l]) => ({ name, shooters: new Set(l.map(e => e.comp.id)).size, bars: stageBars(l, zs, show) })) });
+    charts.push({ dv, sets: sets.map(([name, l]) => ({ name, shooters: new Set(l.map(e => e.comp.id)).size, bars: stageBars(l, zs) })) });
   }
-  const ymax = niceMax(Math.max(0, ...charts.flatMap(c => c.sets.flatMap(s => s.bars.map(b => b.vals.reduce((a, v) => a + v, 0))))));
   $('m-charts').innerHTML = charts.map(c => (c.dv === null ? '' : `<h2 class="sec">${esc(c.dv)}</h2>`)
     + c.sets.map(s => {
       const label = (c.dv ? c.dv + ' / ' : '') + s.name;
-      return `<div class="chart"><h3>${esc(s.name)} <small>${s.shooters} shooters</small></h3>${chartSvg(s.bars, zs, ymax, label)}</div>`;
+      return `<div class="chart"><h3>${esc(s.name)} <small>${s.shooters} shooters</small></h3>${chartSvg(s.bars, zs, label)}</div>`;
     }).join('')).join('');
-  lastCsv.matrix = [['Division', 'Class', 'Stage', 'Shooters-stages', ...zs.map(z => ZONE_LABEL[z])],
-    ...charts.flatMap(c => c.sets.flatMap(s => s.bars.map(b => [c.dv || 'All', s.name, b.stage.name, b.t.n, ...b.vals.map(rawCsv)])))];
+  lastCsv.matrix = [['Division', 'Class', 'Stage', 'Shooter-stages', ...zs.map(z => ZONE_LABEL[z])],
+    ...charts.flatMap(c => c.sets.flatMap(s => s.bars.map(b => [c.dv || 'All', s.name, b.stage.name, b.t.n, ...b.vals])))];
 }
 
 function render() { renderTable(); renderMatrix(); }
@@ -239,12 +233,19 @@ drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && e.dataTransfer.files[0].text().then(load); };
 for (const id of ['f-div', 'f-cls']) $(id).onchange = render;
 for (const id of ['t-scope', 't-show']) $(id).onchange = renderTable;
-for (const id of ['m-show', 'm-a']) $(id).onchange = renderMatrix;
+for (const id of ['m-a']) $(id).onchange = renderMatrix;
 $('t-table').onclick = e => {
   const th = e.target.closest('th'); if (!th) return;
   sort = { col: th.dataset.col, asc: sort.col === th.dataset.col ? !sort.asc : th.dataset.col === 'label' };
   renderTable();
 };
+document.addEventListener('mousemove', e => {
+  const el = e.target.closest && e.target.closest('[data-tip]'), tip = $('tip');
+  if (!el) { tip.style.display = 'none'; return; }
+  tip.textContent = el.dataset.tip; tip.style.display = 'block';
+  tip.style.left = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 8) + 'px';
+  tip.style.top = (e.clientY + 14 + tip.offsetHeight > innerHeight ? e.clientY - tip.offsetHeight - 10 : e.clientY + 14) + 'px';
+});
 $('t-csv').onclick = () => csv(lastCsv.table, 'accuracy-by-group.csv');
 $('m-csv').onclick = () => csv(lastCsv.matrix, 'accuracy-matrix.csv');
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
