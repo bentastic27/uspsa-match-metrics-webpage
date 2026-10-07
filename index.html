@@ -40,6 +40,18 @@ td.empty { color: var(--muted); }
 tfoot td, tr.total td { font-weight: 600; }
 .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .hidden { display: none; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+.legend span { display: inline-flex; gap: 6px; align-items: center; }
+.legend i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+.chart { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.chart h3 { font-size: 14px; margin: 0 0 4px; }
+.chart h3 small { color: var(--muted); font-weight: 400; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart text { fill: var(--muted); font-size: 11px; }
+.chart line { stroke: var(--line); }
+h2.sec { font-size: 16px; margin: 20px 0 8px; }
+:root { --z-A: #3d8f5f; --z-C: #d9b53f; --z-D: #e08a2e; --z-M: #c8372d; --z-NS: #7a5aa6; --z-PEN: #4b5563; }
+@media (prefers-color-scheme: dark) { :root { --z-A: #5bb581; --z-C: #e6c653; --z-D: #ee9d4a; --z-M: #e5574d; --z-NS: #a283d1; --z-PEN: #9aa3b0; } }
 </style>
 </head>
 <body>
@@ -62,7 +74,7 @@ tfoot td, tr.total td { font-weight: 600; }
     </div>
     <nav>
       <button data-tab="table" class="on">Counts by group</button>
-      <button data-tab="matrix">Accuracy matrix</button>
+      <button data-tab="matrix">Stage charts</button>
     </nav>
 
     <div id="tab-table">
@@ -79,16 +91,17 @@ tfoot td, tr.total td { font-weight: 600; }
 
     <div id="tab-matrix" class="hidden">
       <div class="controls">
-        <label>Metric <select id="m-metric"></select></label>
         <label>Show <select id="m-show">
           <option value="avg">Avg per shooter-stage</option>
           <option value="total">Totals</option>
         </select></label>
+        <label><input type="checkbox" id="m-a" checked> Include A hits</label>
         <button id="m-csv">Export CSV</button>
       </div>
-      <div class="wrap"><table id="m-table"></table></div>
+      <div class="legend" id="m-legend"></div>
+      <div id="m-charts"></div>
     </div>
-    <div class="note">Penalties = procedurals, double popper misses, late/extra shots, extra hits and additional penalties (Misses and No Shoots are separate columns). "Avg per shooter-stage" divides by the number of shooter-stage scores in the row. DQ/DNF shooters and empty scores are excluded; chrono stages are ignored.</div>
+    <div class="note">Penalties = procedurals, double popper misses, late/extra shots, extra hits and additional penalties (Misses and No Shoots are separate columns). "Avg per shooter-stage" divides by the number of shooter-stage scores in the row. The stage charts show one stacked bar per stage: all classes combined, then each class, on a shared scale; the Class dropdown only applies to the counts tab, and "Each division" gives a set of charts per division. DQ/DNF shooters and empty scores are excluded; chrono stages are ignored.</div>
   </section>
 </main>
 <script src="app.js"></script>
@@ -110,7 +123,6 @@ function load(text) {
   $('f-div').innerHTML = opts('All divisions (combined)', 'Each division', [...new Set(M.comps.map(c => c.division))].sort(divisionRank));
   $('f-cls').innerHTML = opts('All classes (combined)', 'Each class', [...new Set(M.entries.map(e => e.comp.cls))].sort((a, b) => classRank(a) - classRank(b)));
   $('f-div').value = 'each';
-  $('m-metric').innerHTML = ZONES.map(z => `<option value="${z}">${esc(ZONE_LABEL[z])}</option>`).join('');
   $('app').classList.remove('hidden');
   render();
 }
@@ -158,21 +170,57 @@ function renderTable() {
   lastCsv.table = [cols.map(c => c.label), ...gs.map(g => [g.label, g.t.shooterCount, ...ZONES.map(z => rawCsv(cellVal(g.t, z, show)))])];
 }
 
+const niceMax = v => { const p = Math.pow(10, Math.floor(Math.log10(v || 1))); for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p; return 10 * p; };
+
+function stageBars(list, zs, show) {
+  return M.stages.map(s => {
+    const l = list.filter(e => e.stage === s), t = aggregate(l);
+    return { stage: s, t, vals: zs.map(z => cellVal(t, z, show) || 0) };
+  });
+}
+
+function chartSvg(bars, zs, ymax, label) {
+  const W = 720, H = 190, L = 44, R = 8, T = 8, B = 26, pw = W - L - R, ph = H - T - B;
+  const y = v => T + ph - ph * v / ymax;
+  let g = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = ymax * i / 4;
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${+v.toFixed(2)}</text>`;
+  }
+  const band = pw / bars.length;
+  bars.forEach((b, i) => {
+    const x = L + band * i + band * 0.15;
+    let acc = 0;
+    zs.forEach((z, k) => {
+      const v = b.vals[k]; if (!v) return;
+      g += `<rect x="${x}" y="${y(acc + v)}" width="${band * 0.7}" height="${ph * v / ymax}" fill="var(--z-${z})"><title>${esc(b.stage.name)} · ${esc(label)}\n${ZONE_LABEL[z]}: ${+v.toFixed(2)} (${b.t.n} shooter-stages)</title></rect>`;
+      acc += v;
+    });
+    g += `<text x="${x + band * 0.35}" y="${H - 8}" text-anchor="middle"><title>${esc(b.stage.name)}</title>S${b.stage.num}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">${g}</svg>`;
+}
+
 function renderMatrix() {
-  const z = $('m-metric').value, show = $('m-show').value;
-  const gs = groups(M.entries);
-  const f = l => l.length ? cellVal(aggregate(l), z, show) : null;
-  const rows = gs.map(g => [g.label, ...M.stages.map(s => f(g.list.filter(e => e.stage === s))), f(g.list)]);
-  const head = ['Group', ...M.stages.map(s => s.name), 'Match total'];
-  // shade stage columns on one scale; the total column is excluded since totals dwarf stage values
-  const body = rows.flatMap(r => r.slice(1, -1)).filter(v => v !== null);
-  const lo = Math.min(...body), hi = Math.max(...body);
-  const shade = v => v === null || hi === lo ? '' : ` style="background:color-mix(in srgb, var(--accent) ${Math.round(8 + 62 * (v - lo) / (hi - lo))}%, transparent)"`;
-  $('m-table').innerHTML = '<thead><tr>' + head.map(h => `<th style="cursor:default">${esc(h)}</th>`).join('') + '</tr></thead><tbody>'
-    + rows.map(r => `<tr><td>${esc(r[0])}</td>` + r.slice(1).map((v, i) =>
-      `<td${i === r.length - 2 ? '' : shade(v)}${v === null ? ' class="empty"' : ''}>${fmt(v, show)}</td>`).join('') + '</tr>').join('')
-    + '</tbody>';
-  lastCsv.matrix = [head, ...rows.map(r => [r[0], ...r.slice(1).map(rawCsv)])];
+  const show = $('m-show').value, zs = ZONES.filter(z => z !== 'A' || $('m-a').checked);
+  $('m-legend').innerHTML = zs.map(z => `<span><i style="background:var(--z-${z})"></i>${ZONE_LABEL[z]}</span>`).join('');
+  const d = $('f-div').value;
+  const divs = d === 'each' ? [...new Set(M.entries.map(e => e.comp.division))].sort(divisionRank) : [d.startsWith('v:') ? d.slice(2) : null];
+  const charts = [];
+  for (const dv of divs) {
+    const list = dv === null ? M.entries : M.entries.filter(e => e.comp.division === dv);
+    const classes = [...new Set(list.map(e => e.comp.cls))].sort((a, b) => classRank(a) - classRank(b));
+    const sets = [['All classes', list], ...classes.map(c => [c, list.filter(e => e.comp.cls === c)])];
+    charts.push({ dv, sets: sets.map(([name, l]) => ({ name, shooters: new Set(l.map(e => e.comp.id)).size, bars: stageBars(l, zs, show) })) });
+  }
+  const ymax = niceMax(Math.max(0, ...charts.flatMap(c => c.sets.flatMap(s => s.bars.map(b => b.vals.reduce((a, v) => a + v, 0))))));
+  $('m-charts').innerHTML = charts.map(c => (c.dv === null ? '' : `<h2 class="sec">${esc(c.dv)}</h2>`)
+    + c.sets.map(s => {
+      const label = (c.dv ? c.dv + ' / ' : '') + s.name;
+      return `<div class="chart"><h3>${esc(s.name)} <small>${s.shooters} shooters</small></h3>${chartSvg(s.bars, zs, ymax, label)}</div>`;
+    }).join('')).join('');
+  lastCsv.matrix = [['Division', 'Class', 'Stage', 'Shooters-stages', ...zs.map(z => ZONE_LABEL[z])],
+    ...charts.flatMap(c => c.sets.flatMap(s => s.bars.map(b => [c.dv || 'All', s.name, b.stage.name, b.t.n, ...b.vals.map(rawCsv)])))];
 }
 
 function render() { renderTable(); renderMatrix(); }
@@ -191,7 +239,7 @@ drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && e.dataTransfer.files[0].text().then(load); };
 for (const id of ['f-div', 'f-cls']) $(id).onchange = render;
 for (const id of ['t-scope', 't-show']) $(id).onchange = renderTable;
-for (const id of ['m-metric', 'm-show']) $(id).onchange = renderMatrix;
+for (const id of ['m-show', 'm-a']) $(id).onchange = renderMatrix;
 $('t-table').onclick = e => {
   const th = e.target.closest('th'); if (!th) return;
   sort = { col: th.dataset.col, asc: sort.col === th.dataset.col ? !sort.asc : th.dataset.col === 'label' };
@@ -203,6 +251,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
   $('tab-table').classList.toggle('hidden', b.dataset.tab !== 'table');
   $('tab-matrix').classList.toggle('hidden', b.dataset.tab !== 'matrix');
+  $('f-cls').disabled = b.dataset.tab === 'matrix';
 });
 </script>
 </body>
