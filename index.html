@@ -92,12 +92,16 @@ h2.sec { font-size: 16px; margin: 20px 0 8px; }
 
     <div id="tab-matrix" class="hidden">
       <div class="controls">
+        <label>Tables show <select id="m-show">
+          <option value="total">Totals</option>
+          <option value="avg">Avg per shooter-stage</option>
+        </select></label>
         <button id="m-csv">Export CSV</button>
       </div>
       <div class="legend" id="m-legend"></div>
       <div id="m-charts"></div>
     </div>
-    <div class="note">Penalties = procedurals, double popper misses, late/extra shots, extra hits and additional penalties (Misses and No Shoots are separate columns). "Avg per shooter-stage" divides by the number of shooter-stage scores in the row. The stage charts show one bar per stage, each scaled to 100% of its A/C/D/Miss/No Shoot/Penalty total (hover a color for the exact count; untick a zone in the legend to hide it and rescale): all classes combined, then each class; the Class dropdown only applies to the counts tab, and "Each division" gives a set of charts per division. DQ/DNF shooters and empty scores are excluded; chrono stages are ignored.</div>
+    <div class="note">Penalties = procedurals, double popper misses, late/extra shots, extra hits and additional penalties (Misses and No Shoots are separate columns). "Avg per shooter-stage" divides by the number of shooter-stage scores in the row. The stage charts show one bar per stage, each scaled to 100% of its A/C/D/Miss/No Shoot/Penalty total (hover a color for the exact count, with a table of every zone under each chart; untick a zone in the legend to hide it and rescale): all classes combined, then each class; the Class dropdown only applies to the counts tab, and "Each division" gives a set of charts per division. DQ/DNF shooters and empty scores are excluded; chrono stages are ignored.</div>
   </section>
 <div class="tip" id="tip"></div>
 </main>
@@ -204,8 +208,15 @@ $('m-legend').onchange = e => {
   renderMatrix();
 };
 
+function stageTable(bars, all, show) {
+  const cells = (label, t) => `<td>${esc(label)}</td><td>${t.shooterCount}</td>` + ZONES.map(z => `<td>${fmt(cellVal(t, z, show), show)}</td>`).join('');
+  return '<div class="wrap" style="margin-top:8px"><table><thead><tr><th style="cursor:default">Stage</th><th style="cursor:default">Shooters</th>'
+    + ZONES.map(z => `<th style="cursor:default">${ZONE_LABEL[z]}</th>`).join('') + '</tr></thead><tbody>'
+    + bars.map(b => '<tr>' + cells(b.stage.name, b.t) + '</tr>').join('') + '</tbody><tfoot><tr class="total">' + cells('All stages', all) + '</tr></tfoot></table></div>';
+}
+
 function renderMatrix() {
-  const zs = ZONES.filter(z => !hidden.has(z));
+  const zs = ZONES.filter(z => !hidden.has(z)), show = $('m-show').value;
   const d = $('f-div').value;
   const divs = d === 'each' ? [...new Set(M.entries.map(e => e.comp.division))].sort(divisionRank) : [d.startsWith('v:') ? d.slice(2) : null];
   const charts = [];
@@ -213,16 +224,18 @@ function renderMatrix() {
     const list = dv === null ? M.entries : M.entries.filter(e => e.comp.division === dv);
     const classes = [...new Set(list.map(e => e.comp.cls))].sort((a, b) => classRank(a) - classRank(b));
     const sets = [['All classes', list], ...classes.map(c => [c, list.filter(e => e.comp.cls === c)])];
-    charts.push({ dv, sets: sets.map(([name, l]) => ({ name, shooters: new Set(l.map(e => e.comp.id)).size, bars: stageBars(l, zs) })) });
+    charts.push({ dv, sets: sets.map(([name, l]) => ({ name, shooters: new Set(l.map(e => e.comp.id)).size, bars: stageBars(l, zs), all: aggregate(l) })) });
   }
   $('m-charts').innerHTML = charts.map(c => (c.dv === null ? '' : `<h2 class="sec">${esc(c.dv)}</h2>`)
     + c.sets.map(s => {
       const label = (c.dv ? c.dv + ' / ' : '') + s.name;
-      return `<div class="chart"><h3>${esc(s.name)} <small>${s.shooters} shooters</small></h3>${chartSvg(s.bars, zs, label)}</div>`;
+      return `<div class="chart"><h3>${esc(s.name)} <small>${s.shooters} shooters</small></h3>${chartSvg(s.bars, zs, label)}${stageTable(s.bars, s.all, show)}</div>`;
     }).join('')).join('');
   lastCsv.matrix = [['Division', 'Class', 'Stage', 'Shooter-stages', ...zs.map(z => ZONE_LABEL[z])],
     ...charts.flatMap(c => c.sets.flatMap(s => s.bars.map(b => [c.dv || 'All', s.name, b.stage.name, b.t.n, ...b.vals])))];
 }
+
+$('m-show').onchange = renderMatrix;
 
 function render() { renderTable(); renderMatrix(); }
 
