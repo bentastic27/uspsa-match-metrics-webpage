@@ -6,11 +6,11 @@
 <title>USPSA Accuracy Breakdown</title>
 <style>
 :root {
-  --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; --line: #dcdcd5; --card: #fff;
-  --accent: #c2410c; --accent-fg: #fff;
+  --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; --line: #d0d0c7; --card: #fff;
+  --stripe: #efefe9; --accent: #c2410c; --accent-fg: #fff;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #161615; --fg: #ececE8; --muted: #9a9a93; --line: #34342f; --card: #1f1f1d; --accent: #ea7a3c; --accent-fg: #161615; }
+  :root { --bg: #161615; --fg: #ececE8; --muted: #9a9a93; --line: #45453f; --card: #1f1f1d; --stripe: #2b2b28; --accent: #ea7a3c; --accent-fg: #161615; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
@@ -35,6 +35,8 @@ th:first-child, td:first-child { text-align: left; position: sticky; left: 0; ba
 th { cursor: pointer; user-select: none; font-weight: 600; }
 th.sorted::after { content: ' \25BE'; }
 th.sorted.asc::after { content: ' \25B4'; }
+th:not(:last-child), td:not(:last-child) { border-right: 1px solid var(--line); }
+tbody tr:nth-child(even) td { background: var(--stripe); }
 tr:last-child td { border-bottom: 0; }
 td.empty { color: var(--muted); }
 tfoot td, tr.total td { font-weight: 600; }
