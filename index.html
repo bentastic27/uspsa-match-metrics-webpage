@@ -41,7 +41,7 @@ tfoot td, tr.total td { font-weight: 600; }
 .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .hidden { display: none; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
-.legend span { display: inline-flex; gap: 6px; align-items: center; }
+.legend label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 .legend i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
 .chart { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
 .chart h3 { font-size: 14px; margin: 0 0 4px; }
@@ -92,13 +92,12 @@ h2.sec { font-size: 16px; margin: 20px 0 8px; }
 
     <div id="tab-matrix" class="hidden">
       <div class="controls">
-        <label><input type="checkbox" id="m-a" checked> Include A hits</label>
         <button id="m-csv">Export CSV</button>
       </div>
       <div class="legend" id="m-legend"></div>
       <div id="m-charts"></div>
     </div>
-    <div class="note">Penalties = procedurals, double popper misses, late/extra shots, extra hits and additional penalties (Misses and No Shoots are separate columns). "Avg per shooter-stage" divides by the number of shooter-stage scores in the row. The stage charts show one bar per stage, each scaled to 100% of its A/C/D/Miss/No Shoot/Penalty total (hover a color for the exact count): all classes combined, then each class; the Class dropdown only applies to the counts tab, and "Each division" gives a set of charts per division. DQ/DNF shooters and empty scores are excluded; chrono stages are ignored.</div>
+    <div class="note">Penalties = procedurals, double popper misses, late/extra shots, extra hits and additional penalties (Misses and No Shoots are separate columns). "Avg per shooter-stage" divides by the number of shooter-stage scores in the row. The stage charts show one bar per stage, each scaled to 100% of its A/C/D/Miss/No Shoot/Penalty total (hover a color for the exact count; untick a zone in the legend to hide it and rescale): all classes combined, then each class; the Class dropdown only applies to the counts tab, and "Each division" gives a set of charts per division. DQ/DNF shooters and empty scores are excluded; chrono stages are ignored.</div>
   </section>
 <div class="tip" id="tip"></div>
 </main>
@@ -196,9 +195,17 @@ function chartSvg(bars, zs, label) {
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">${g}</svg>`;
 }
 
+const hidden = new Set();
+$('m-legend').innerHTML = ZONES.map(z => `<label><input type="checkbox" data-z="${z}" checked><i style="background:var(--z-${z})"></i>${ZONE_LABEL[z]}</label>`).join('');
+$('m-legend').onchange = e => {
+  const z = e.target.dataset.z;
+  if (e.target.checked) hidden.delete(z); else hidden.add(z);
+  if (hidden.size === ZONES.length) { hidden.delete(z); e.target.checked = true; } // keep one segment visible
+  renderMatrix();
+};
+
 function renderMatrix() {
-  const zs = ZONES.filter(z => z !== 'A' || $('m-a').checked);
-  $('m-legend').innerHTML = zs.map(z => `<span><i style="background:var(--z-${z})"></i>${ZONE_LABEL[z]}</span>`).join('');
+  const zs = ZONES.filter(z => !hidden.has(z));
   const d = $('f-div').value;
   const divs = d === 'each' ? [...new Set(M.entries.map(e => e.comp.division))].sort(divisionRank) : [d.startsWith('v:') ? d.slice(2) : null];
   const charts = [];
@@ -233,7 +240,6 @@ drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && e.dataTransfer.files[0].text().then(load); };
 for (const id of ['f-div', 'f-cls']) $(id).onchange = render;
 for (const id of ['t-scope', 't-show']) $(id).onchange = renderTable;
-for (const id of ['m-a']) $(id).onchange = renderMatrix;
 $('t-table').onclick = e => {
   const th = e.target.closest('th'); if (!th) return;
   sort = { col: th.dataset.col, asc: sort.col === th.dataset.col ? !sort.asc : th.dataset.col === 'label' };
